@@ -211,9 +211,11 @@ All option, event, and result types are exported from the package root and defin
 ## Platform behavior
 
 - **iOS 26+** uses the system Liquid Glass `UITabBarController` for floating tab
-  bars, and `UIGlassEffect` for the custom capsule. System tab bar hosting automatically
-  compensates for the inherited bottom safe-area insets and extends the layout edge-to-edge
-  so the WebView renders behind the glass without clipping. iOS 15–25 fall back to
+  bars, and `UIGlassEffect` for the custom capsule. The system tab bar is layered
+  over the WebView instead of adopting it, so UIKit never resizes the WebView or
+  inflates its safe area with the tab bar's own inset — `env(safe-area-inset-*)`
+  keeps reporting the same device values your app sees without this plugin, and
+  the WebView renders full-bleed behind the glass. iOS 15–25 fall back to
   `UIBlurEffect` materials — the whole Liquid Glass path is behind runtime
   `if #available` checks, so it compiles and runs cleanly at the iOS 15 floor.
 - **Android 12+** renders the `liquidGlass` effect with a `RenderEffect` blur of
@@ -258,6 +260,23 @@ pnpm run verify:android  # cd android && ./gradlew clean build test
 ```
 
 `pnpm run verify:ios:test` runs the Swift unit tests on an iOS Simulator.
+
+## Upgrading to 7.3.3 (iOS 26 bottom safe area)
+
+`7.3.0`–`7.3.2` parented the WebView inside the iOS 26 system Liquid Glass
+`UITabBarController`. UIKit then reported the tab bar's own inset through
+`env(safe-area-inset-bottom)` (83pt instead of the device's 34pt on an iPhone 17
+Pro), and the plugin's attempt to cancel that inset did not converge — the
+reported value ended up depending on which layout pass ran last. Apps using
+`env(safe-area-inset-bottom)` saw a phantom band at the bottom of the screen, on
+iOS 26 only.
+
+From `7.3.3` the tab bar is layered over the WebView and the plugin never
+touches safe-area insets. `env(safe-area-inset-*)` reports exactly the device
+values it would report without this plugin, on every iOS version. If your app
+added a workaround for the phantom band — subtracting a constant, forcing
+`padding-bottom: 0`, or hardcoding an inset — remove it, and keep your own
+bottom spacing for the native tab bar as documented above.
 
 ## Versioning
 

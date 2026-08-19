@@ -4,58 +4,23 @@
  *
  * Derived from @capgo/capacitor-native-navigation
  * (https://github.com/Cap-go/capacitor-native-navigation), Copyright (c) Capgo.
- * See NOTICE for details. */
+ * See NOTICE for details.
+ *
+ * iOS 26+ system Liquid Glass tab bar hosting. The system tab bar needs a real
+ * `UITabBarController`, but the Capacitor WKWebView must never become that
+ * controller's child: UIKit would then own the WebView's frame and safe area
+ * and report the tab bar's own inset through `env(safe-area-inset-bottom)`.
+ * Instead the controller is layered over the WebView inside a passthrough host
+ * view, so the WebView keeps the device safe area it has without this plugin. */
 
 import UIKit
-import WebKit
 
-func nativeNavigationSystemTabBottomSafeAreaCompensation(
-    safeAreaBottom: CGFloat,
-    currentCompensation: CGFloat
-) -> CGFloat {
-    guard safeAreaBottom.isFinite,
-          currentCompensation.isFinite else {
-        return 0
+/// True when `hit` belongs to `tabBar` and should receive the touch.
+func nativeNavigationSystemTabPassthroughAllowsHit(_ hit: UIView?, tabBar: UITabBar?) -> Bool {
+    guard let hit, let tabBar else {
+        return false
     }
-    // UIKit reports the already-compensated safe area after the first update.
-    // Remove the previous negative inset to recover the original inherited value.
-    let inheritedBottomInset = safeAreaBottom - currentCompensation
-    return -max(0, inheritedBottomInset)
-}
-
-func nativeNavigationSystemTabExtendedContentFrame(
-    currentFrame: CGRect,
-    systemTabBounds: CGRect
-) -> CGRect {
-    let values = [
-        currentFrame.minX,
-        currentFrame.minY,
-        currentFrame.width,
-        currentFrame.height,
-        systemTabBounds.minX,
-        systemTabBounds.minY,
-        systemTabBounds.width,
-        systemTabBounds.height
-    ]
-    guard values.allSatisfy(\.isFinite),
-          currentFrame.width >= 0,
-          currentFrame.height >= 0,
-          systemTabBounds.width >= 0,
-          systemTabBounds.height >= 0 else {
-        return currentFrame
-    }
-
-    let targetMaxY = max(currentFrame.maxY, systemTabBounds.maxY)
-    guard targetMaxY > currentFrame.maxY else {
-        return currentFrame
-    }
-
-    return CGRect(
-        x: currentFrame.minX,
-        y: currentFrame.minY,
-        width: currentFrame.width,
-        height: targetMaxY - currentFrame.minY
-    )
+    return hit === tabBar || hit.isDescendant(of: tabBar)
 }
 
 func nativeNavigationSystemTabAppearanceHasOpaqueBackground(_ appearance: UITabBarAppearance) -> Bool {
@@ -73,167 +38,40 @@ func nativeNavigationSystemTabAppearanceHasOpaqueBackground(_ appearance: UITabB
     return false
 }
 
+/// Clears the legacy background layers in place so the platform's own Liquid
+/// Glass surface is the only thing drawn behind the system tab bar.
+func nativeNavigationMakeSystemTabAppearanceTransparent(_ appearance: UITabBarAppearance) {
+    appearance.backgroundEffect = nil
+    appearance.backgroundColor = .clear
+    appearance.shadowColor = .clear
+}
+
 func nativeNavigationSystemTabTransparentStandardAppearance(
     from source: UITabBarAppearance
 ) -> UITabBarAppearance {
     let appearance = source.copy()
-    appearance.backgroundEffect = nil
-    appearance.backgroundColor = .clear
-    appearance.shadowColor = .clear
+    nativeNavigationMakeSystemTabAppearanceTransparent(appearance)
     return appearance
 }
 
-@available(iOS 26.0, *)
-final class NativeNavigationSystemTabSafeAreaObserverView: UIView {
-    weak var contentController: NativeNavigationTabContentController?
-    weak var hostedWebView: WKWebView?
-    private(set) var bottomSafeAreaCompensation: CGFloat = 0
-    private var opaqueStandardAppearance: UITabBarAppearance?
+/// Full-bleed host for the system `UITabBarController`'s view. Every touch
+/// outside the tab bar itself falls through to the WebView underneath.
+final class NativeNavigationSystemTabHostView: UIView {
+    weak var tabBar: UITabBar?
 
-    override func safeAreaInsetsDidChange() {
-        super.safeAreaInsetsDidChange()
-        synchronize()
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        synchronize()
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    func synchronize() {
-        guard let contentController,
-              let tabController = contentController.tabBarController as? NativeNavigationTabController else {
-            return
-        }
-
-        synchronizeSystemTabBarBackground(tabController)
-
-        let nextCompensation = nativeNavigationSystemTabBottomSafeAreaCompensation(
-            safeAreaBottom: contentController.view.safeAreaInsets.bottom,
-            currentCompensation: bottomSafeAreaCompensation
-        )
-
-        let contentView = contentController.view!
-        contentView.clipsToBounds = false
-        tabController.view.clipsToBounds = false
-
-        var extendedFrame = contentView.frame
-        if let contentContainer = contentView.superview {
-            // UITabBarController may size its selected child only to the area
-            // above the system tab bar. Extend that child to the controller's
-            // physical bottom so the WKWebView can render behind Liquid Glass.
-            contentContainer.clipsToBounds = false
-            let systemTabBounds = tabController.view.convert(
-                tabController.view.bounds,
-                to: contentContainer
-            )
-            extendedFrame = nativeNavigationSystemTabExtendedContentFrame(
-                currentFrame: contentView.frame,
-                systemTabBounds: systemTabBounds
-            )
-        }
-
-        UIView.performWithoutAnimation {
-            if contentView.frame != extendedFrame {
-                contentView.frame = extendedFrame
-            }
-            if let hostedWebView, hostedWebView.superview === contentView {
-                hostedWebView.frame = contentView.bounds
-            }
-            if self.frame != contentView.bounds {
-                self.frame = contentView.bounds
-            }
-        }
-
-        guard abs(nextCompensation - bottomSafeAreaCompensation) > 0.5 else {
-            return
-        }
-
-        bottomSafeAreaCompensation = nextCompensation
-        var insets = contentController.additionalSafeAreaInsets
-        insets.bottom = nextCompensation
-        contentController.additionalSafeAreaInsets = insets
-    }
-
-    private func synchronizeSystemTabBarBackground(_ tabController: NativeNavigationTabController) {
-        let tabBar = tabController.tabBar
-
-        if UIAccessibility.isReduceTransparencyEnabled {
-            if let opaqueStandardAppearance {
-                tabBar.standardAppearance = opaqueStandardAppearance
-                tabBar.items?.forEach { item in
-                    item.standardAppearance = opaqueStandardAppearance
-                }
-                self.opaqueStandardAppearance = nil
-            }
-            tabBar.isTranslucent = false
-            return
-        }
-
-        let currentAppearance = tabBar.standardAppearance
-        if nativeNavigationSystemTabAppearanceHasOpaqueBackground(currentAppearance) {
-            opaqueStandardAppearance = currentAppearance.copy()
-        }
-
-        let transparentAppearance = nativeNavigationSystemTabTransparentStandardAppearance(
-            from: currentAppearance
-        )
-        tabBar.standardAppearance = transparentAppearance
-        tabBar.items?.forEach { item in
-            item.standardAppearance = transparentAppearance
-        }
-        tabBar.isTranslucent = true
-    }
-}
-
-extension NativeNavigationTabContentController {
-    @discardableResult
-    func host(webView: WKWebView) -> Bool {
-        guard host(webView: webView as UIView) else {
-            return false
-        }
-
-        if #available(iOS 26.0, *) {
-            prepareForSystemLiquidGlassHosting(webView: webView)
-        }
-        return true
-    }
-
-    @available(iOS 26.0, *)
-    private func prepareForSystemLiquidGlassHosting(webView: WKWebView) {
-        // Extending only the safe-area layout guide does not enlarge the child
-        // frame that UITabBarController owns. Extend both the child view and the
-        // hosted WKWebView so rendering reaches the physical screen bottom.
-        edgesForExtendedLayout = .all
-        extendedLayoutIncludesOpaqueBars = true
-        view.insetsLayoutMarginsFromSafeArea = false
-        view.clipsToBounds = false
-        webView.insetsLayoutMarginsFromSafeArea = false
-        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-
-        let observer: NativeNavigationSystemTabSafeAreaObserverView
-        if let existingObserver = view.subviews.first(where: {
-            $0 is NativeNavigationSystemTabSafeAreaObserverView
-        }) as? NativeNavigationSystemTabSafeAreaObserverView {
-            observer = existingObserver
-        } else {
-            observer = NativeNavigationSystemTabSafeAreaObserverView(frame: view.bounds)
-            observer.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            observer.backgroundColor = .clear
-            observer.isOpaque = false
-            observer.isUserInteractionEnabled = false
-            view.insertSubview(observer, at: 0)
-        }
-
-        observer.contentController = self
-        observer.hostedWebView = webView
-        observer.synchronize()
-
-        // UIKit can recalculate the selected child frame after tab items are
-        // installed. Run the normal tab-controller layout once, then reapply the
-        // edge-to-edge frame using the settled hierarchy.
-        tabBarController?.view.setNeedsLayout()
-        tabBarController?.view.layoutIfNeeded()
-        observer.synchronize()
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return nativeNavigationSystemTabPassthroughAllowsHit(hit, tabBar: tabBar) ? hit : nil
     }
 }

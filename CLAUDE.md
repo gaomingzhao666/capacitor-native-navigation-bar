@@ -36,9 +36,13 @@ src/                  TypeScript source (the npm package)
 
 android/              Android (Java) native implementation
 ios/Sources/          Swift native implementation
+  NativeNavigationPlugin.swift          Bridge entry point, chrome layout, transitions
+  NativeNavigationChrome.swift          Floating/curve tab bar, hit-slop containers, tab controllers
+  NativeNavigationSystemTabOverlay.swift  iOS 26+ passthrough hosting for the system Liquid Glass tab bar
+  SVGIconRenderer.swift                 Inline SVG → UIImage
 ios/Tests/            Swift native tests
 
-test/                 Vitest tests for the TypeScript layer (55 tests across 4 files)
+test/                 Vitest tests for the TypeScript layer (42 tests across 4 files)
 scripts/
   check-wiring.mjs    Validates naming consistency and platform floors across JS/Swift/Java/manifests
 .github/workflows/
@@ -75,7 +79,7 @@ pnpm install              # install deps
 pnpm run build            # clean + tsdown → dist/ (ESM only)
 pnpm run lint             # oxfmt check + oxlint + typecheck + wiring check
 pnpm run fmt              # auto-fix formatting and lint
-pnpm run test             # vitest (55 JS tests across 4 files)
+pnpm run test             # vitest (42 JS tests across 4 files)
 pnpm run typecheck        # tsc (TypeScript 7) against the single tsconfig.json
 pnpm run check:wiring     # validates JS/iOS/Android naming agreement + platform floors
 pnpm run check:package    # publint --strict + attw --pack . --profile esm-only
@@ -196,7 +200,7 @@ a separate release, not something this package spans today.
 
 ---
 
-## No safe-area/inset reporting
+## No safe-area/inset reporting — and no safe-area _mutation_ either
 
 The plugin does not compute or expose safe-area or content-inset information
 in any form — no CSS variables, no `insets` return value, and no change
@@ -207,6 +211,44 @@ native bars. Do not reintroduce inset computation, CSS variable injection, or
 a `configure({ contentInsetMode })`-style option — this was deliberately
 removed; see git history around the "remove safe-area logic" change for
 context.
+
+The same rule cuts the other way: the plugin must not _change_ what the
+WebView reports either. Whatever `env(safe-area-inset-*)` returns without this
+plugin installed is what it must still return with it. See
+[iOS system tab hosting](#ios-system-tab-hosting-ios-26) for the constraint
+this puts on the iOS 26 tab bar.
+
+---
+
+## iOS system tab hosting (iOS 26+)
+
+The iOS 26 Liquid Glass tab bar only exists on a real `UITabBarController`, so
+the plugin creates one (`NativeNavigationTabController`). **The Capacitor
+WKWebView is never a child of it.**
+
+`NativeNavigationSystemTabOverlay.swift` layers the controller over the WebView
+inside `NativeNavigationSystemTabHostView`, a full-bleed passthrough view whose
+`hitTest` returns `nil` for every point outside the tab bar. The tab controller
+and its `NativeNavigationTabContentController` children are fully transparent
+and non-interactive; the WebView stays a sibling in
+`systemTabRootContainer` — the container that replaces the bridge view
+controller's root view.
+
+Do not "simplify" this by parenting the WebView into the selected tab's content
+view controller. That was the 7.2–7.3.2 design and it is what this layout
+replaces:
+
+- UITabBarController hands its child a bottom safe-area inset for the tab bar
+  (83pt on an iPhone 17 Pro instead of the device's 34pt), so every host app
+  using `env(safe-area-inset-bottom)` grew a phantom band at the bottom of the
+  screen on iOS 26 only.
+- Cancelling that inset with a negative `additionalSafeAreaInsets` written from
+  a layout pass diverged instead of settling — UIKit clamps the value it
+  reports back, so each pass subtracted another inset (-83 → -117 → -151 → …
+  in six passes) and the WebView's reported safe area ended up as whatever the
+  last layout pass happened to leave behind.
+- Reparenting also forced frame juggling, snapshot placeholders and the
+  WebView-overlay "lifting" helpers, all of which are now gone.
 
 ---
 
@@ -307,3 +349,7 @@ Do not add `CLAUDE.md` or any dev-only file to this list.
   safe-area-aware positioning of the native navbar/tabbar — this was
   deliberately removed; native chrome is positioned at the raw view edges and
   hosting apps own their own safe-area layout.
+- Do not write `additionalSafeAreaInsets` (or any other safe-area override) on
+  any view controller, and do not reparent the WebView into the system
+  `UITabBarController` — see
+  [iOS system tab hosting](#ios-system-tab-hosting-ios-26).

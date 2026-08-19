@@ -195,7 +195,7 @@ await NativeNavigation.finishTransition({ direction: "forward" })
 
 ## プラットフォームごとの動作
 
-- **iOS 26+**: フローティングタブバーにシステムの Liquid Glass `UITabBarController` を使用し、カスタムカプセルには `UIGlassEffect` を使用します。システムタブバーのホスティング時には継承された下部セーフエリアのインセットを自動補正し、エッジトゥエッジにレイアウトを拡張することで、WebView がクリッピングされずにガラスの背後まで描画されます。iOS 15〜25 では `UIBlurEffect` マテリアルにフォールバックします。Liquid Glass パス全体はランタイムの `if #available` チェックで保護されているため、iOS 15 フロアでも問題なくコンパイル・動作します。
+- **iOS 26+**: フローティングタブバーにシステムの Liquid Glass `UITabBarController` を使用し、カスタムカプセルには `UIGlassEffect` を使用します。システムタブバーは WebView を配下に取り込むのではなく、WebView の上にレイヤーとして重ねます。そのため UIKit が WebView をリサイズしたり、タブバー自身のインセットでセーフエリアを膨らませたりすることはありません。`env(safe-area-inset-*)` はプラグイン導入前とまったく同じ端末の値を返し続け、WebView はガラスの背後まで全面に描画されます。iOS 15〜25 では `UIBlurEffect` マテリアルにフォールバックします。Liquid Glass パス全体はランタイムの `if #available` チェックで保護されているため、iOS 15 フロアでも問題なくコンパイル・動作します。
 - **Android 12+**: WebView の後ろに `RenderEffect` ブラーで `liquidGlass` エフェクトを描画します。Android 11 は半透明サーフェスにフォールバックします。
 - アイコンはインライン SVG（両プラットフォームでネイティブ描画）、SF Symbols、バンドル済み画像/drawable 名に対応しています。
 
@@ -237,6 +237,22 @@ pnpm run verify:android  # cd android && ./gradlew clean build test
 ```
 
 `pnpm run verify:ios:test` で iOS シミュレーター上の Swift ユニットテストを実行します。
+
+## 7.3.3 へのアップグレード（iOS 26 の下部セーフエリア）
+
+`7.3.0`〜`7.3.2` では WebView を iOS 26 のシステム Liquid Glass
+`UITabBarController` の配下に組み込んでいました。その結果 UIKit がタブバー自身の
+インセットを `env(safe-area-inset-bottom)` として返し（iPhone 17 Pro では端末本来の
+34pt ではなく 83pt）、さらにそれを打ち消すための補正が収束せず、最後に走った
+レイアウトパス次第で値が変わる状態になっていました。`env(safe-area-inset-bottom)`
+を使うアプリでは、iOS 26 に限って画面下部に不自然な帯が現れます。
+
+`7.3.3` からはタブバーを WebView の上に重ねる方式に変更し、プラグインが
+セーフエリアのインセットに触れることは一切なくなりました。`env(safe-area-inset-*)`
+は、どの iOS バージョンでもプラグイン導入前とまったく同じ端末の値を返します。
+この帯に対する回避策（定数の差し引き、`padding-bottom: 0` の強制、インセットの
+ハードコードなど）をアプリ側に入れている場合は削除し、ネイティブタブバーの分の
+余白は上記のとおりアプリ側で確保してください。
 
 ## バージョニング
 

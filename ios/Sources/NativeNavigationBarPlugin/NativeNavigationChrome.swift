@@ -590,133 +590,28 @@ final class NativeNavigationBar: UINavigationBar {
     }
 }
 
-// MARK: - WebView overlay lifting
-
-final class NativeNavigationWeakView {
-    weak var value: UIView?
-
-    init(_ value: UIView) {
-        self.value = value
-    }
-}
-
-func nativeNavigationLiftWebViewOverlaySubviews(
-    from webView: UIView,
-    to container: UIView,
-    tracking liftedOverlays: inout [NativeNavigationWeakView],
-    excluding excludedViews: [UIView?] = []
-) {
-    webView.subviews
-        .filter { nativeNavigationShouldLiftWebViewOverlay($0, excluding: excludedViews) }
-        .forEach { overlay in
-            let frame = overlay.convert(overlay.bounds, to: container)
-            let hadParentConstraints = nativeNavigationDeactivateParentConstraints(in: webView, involving: overlay)
-            overlay.removeFromSuperview()
-            overlay.frame = frame
-            if hadParentConstraints {
-                overlay.translatesAutoresizingMaskIntoConstraints = true
-            }
-            overlay.autoresizingMask = overlay.autoresizingMask.isEmpty
-                ? [.flexibleWidth, .flexibleHeight]
-                : overlay.autoresizingMask
-            container.addSubview(overlay)
-            liftedOverlays.append(NativeNavigationWeakView(overlay))
-        }
-
-    liftedOverlays = liftedOverlays.filter { $0.value != nil }
-    liftedOverlays
-        .compactMap(\.value)
-        .filter { $0.superview === container }
-        .forEach { container.bringSubviewToFront($0) }
-}
-
-func nativeNavigationShouldLiftWebViewOverlay(_ view: UIView, excluding excludedViews: [UIView?] = []) -> Bool {
-    if excludedViews.contains(where: { $0 === view }) {
-        return false
-    }
-
-    if view is UIScrollView {
-        return false
-    }
-
-    let className = NSStringFromClass(type(of: view))
-    return !className.contains("WK")
-}
-
-private func nativeNavigationDeactivateParentConstraints(in parent: UIView, involving view: UIView) -> Bool {
-    let constraints = parent.constraints.filter { constraint in
-        constraint.firstItem === view || constraint.secondItem === view
-    }
-    NSLayoutConstraint.deactivate(constraints)
-    return !constraints.isEmpty
-}
-
 // MARK: - System tab hosting
 
 final class NativeNavigationTabController: UITabBarController {
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
-        view.isOpaque = true
+        // The controller is layered over the WebView, so everything except the
+        // tab bar itself must stay see-through.
+        view.backgroundColor = .clear
+        view.isOpaque = false
         tabBar.isTranslucent = !UIAccessibility.isReduceTransparencyEnabled
     }
 }
 
+/// Placeholder content for one system tab. The WebView is never parented here —
+/// see `NativeNavigationSystemTabOverlay.swift` for why.
 final class NativeNavigationTabContentController: UIViewController {
-    private weak var hostedWebView: UIView?
-    private var snapshotPlaceholder: UIView?
-
     override func loadView() {
         let view = UIView()
-        view.backgroundColor = .systemBackground
-        view.isOpaque = true
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        view.isUserInteractionEnabled = false
         self.view = view
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        guard hostedWebView?.superview === view else {
-            hostedWebView = nil
-            return
-        }
-        hostedWebView?.frame = view.bounds
-    }
-
-    func clearHostedWebView(ifMatching webView: UIView? = nil, preservingSnapshot: Bool = false) {
-        guard webView == nil || hostedWebView === webView else {
-            return
-        }
-
-        if preservingSnapshot, let hostedWebView = hostedWebView, hostedWebView.superview === view {
-            let placeholder = hostedWebView.snapshotView(afterScreenUpdates: false)
-                ?? nativeNavigationSnapshotPlaceholder(for: hostedWebView)
-            placeholder.frame = hostedWebView.frame
-            placeholder.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            snapshotPlaceholder?.removeFromSuperview()
-            view.insertSubview(placeholder, belowSubview: hostedWebView)
-            snapshotPlaceholder = placeholder
-        }
-
-        hostedWebView = nil
-    }
-
-    @discardableResult
-    func host(webView: UIView) -> Bool {
-        guard view !== webView, !view.isDescendant(of: webView) else {
-            hostedWebView = nil
-            return false
-        }
-
-        snapshotPlaceholder?.removeFromSuperview()
-        snapshotPlaceholder = nil
-        hostedWebView = webView
-        if webView.superview !== view {
-            webView.removeFromSuperview()
-            view.addSubview(webView)
-        }
-        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        webView.frame = view.bounds
-        return true
     }
 }
 

@@ -1,7 +1,7 @@
 # Platform Support
 
 Platform, toolchain, runtime-safety, and release requirements for
-`capacitor-native-navigation-bar` **7.3.2**.
+`capacitor-native-navigation-bar` **7.3.3**.
 
 ## Compatibility matrix
 
@@ -50,11 +50,13 @@ APIs newer than iOS 15 remain behind runtime availability checks. The iOS 26
 Liquid Glass paths require device-level visual validation in addition to the
 simulator tests.
 
-When hosting a WKWebView inside a system `UITabBarController` on iOS 26+, the
-content view controller enables edge-to-edge extended layout and observes safe
-area changes to compensate for the bottom safe area inset inherited from the
-system tab bar, ensuring the WebView reaches the physical bottom behind the
-Liquid Glass bar without clipping.
+The iOS 26+ system Liquid Glass tab bar needs a real `UITabBarController`, but
+the Capacitor WKWebView is never made a child of it. The controller is layered
+over the WebView inside a passthrough host view that forwards touches outside
+the tab bar to the WebView underneath. The WebView therefore keeps the frame and
+the device safe area it has without this plugin: `env(safe-area-inset-bottom)`
+still reports the home-indicator inset and is never inflated by the tab bar's
+own inset, and the WebView renders full-bleed behind the Liquid Glass bar.
 
 ## Android
 
@@ -167,7 +169,7 @@ Repository setup required before the first release:
 
 - add an npm automation/access token as the `NPM_TOKEN` Actions secret
 - keep the release workflow on `main`
-- run the workflow with expected version `7.3.2` and npm tag `latest`
+- run the workflow with expected version `7.3.3` and npm tag `latest`
 
 `npm publish` also executes `prepublishOnly`, so Web/package verification is
 repeated immediately before publication.
@@ -182,6 +184,7 @@ repeated immediately before publication.
 - Android instrumentation tests are not included. Pure helpers are covered by
   JUnit, while Activity/Bridge lifecycle behavior requires a consuming-app or
   instrumentation test.
-- System-tab hosting on iOS temporarily reparents the WebView and selected
-  overlays. Applications with custom Auto Layout constraints must test system
-  and custom tabbar shape switching in their own host.
+- System-tab hosting on iOS replaces the bridge view controller's root view
+  with a container that holds the WebView and the tab bar overlay as siblings.
+  Applications with custom Auto Layout constraints against the bridge root view
+  must test system and custom tabbar shape switching in their own host.
