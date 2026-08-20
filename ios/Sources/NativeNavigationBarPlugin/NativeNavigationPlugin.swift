@@ -2138,7 +2138,10 @@ public class NativeNavigationPlugin: CAPPlugin, CAPBridgedPlugin, UITabBarContro
         let height = rootView.bounds.height
 
         if let container = systemTabRootContainer {
-            container.frame = rootView.bounds
+            container.frame = nativeNavigationSystemTabContainerFrame(
+                currentOrigin: container.frame.origin,
+                superviewBounds: container.superview?.bounds ?? rootView.bounds
+            )
             webView?.frame = container.bounds
         }
 

@@ -12,6 +12,55 @@ import XCTest
 @testable import NativeNavigationBarPlugin
 
 final class NativeNavigationSystemTabOverlayTests: XCTestCase {
+    func testContainerFrameKeepsStatusBarPushedOriginAndReachesTheSuperviewBottomEdge() {
+        // overlaysWebView: false pushes the WebView (and this container) down
+        // by the status bar's height before this plugin ever runs.
+        let frame = nativeNavigationSystemTabContainerFrame(
+            currentOrigin: CGPoint(x: 0, y: 54),
+            superviewBounds: CGRect(x: 0, y: 0, width: 402, height: 874)
+        )
+
+        XCTAssertEqual(frame.origin, CGPoint(x: 0, y: 54))
+        XCTAssertEqual(frame.height, 820)
+        // The container must reach the superview's true bottom edge — no gap
+        // exposing the superview's raw background underneath the tab bar.
+        XCTAssertEqual(frame.maxY, 874)
+        XCTAssertEqual(frame.width, 402)
+    }
+
+    func testContainerFrameIsIdempotentAcrossRepeatedLayoutPasses() {
+        // layoutChrome() runs on every rotation, keyboard event, and tab
+        // update. Feeding each result's own origin back in (as the real
+        // call site does via `container.frame.origin`) must not let the
+        // origin — and therefore the exposed gap — drift across calls.
+        let superviewBounds = CGRect(x: 0, y: 0, width: 402, height: 874)
+        var frame = nativeNavigationSystemTabContainerFrame(
+            currentOrigin: CGPoint(x: 0, y: 54),
+            superviewBounds: superviewBounds
+        )
+
+        for _ in 0..<5 {
+            frame = nativeNavigationSystemTabContainerFrame(
+                currentOrigin: frame.origin,
+                superviewBounds: superviewBounds
+            )
+        }
+
+        XCTAssertEqual(frame.origin, CGPoint(x: 0, y: 54))
+        XCTAssertEqual(frame.maxY, 874)
+    }
+
+    func testContainerFrameFillsTheSuperviewWhenAlreadyFullBleed() {
+        // overlaysWebView: true (or no StatusBar customization at all) keeps
+        // the container at the superview's origin — this must stay a no-op.
+        let frame = nativeNavigationSystemTabContainerFrame(
+            currentOrigin: .zero,
+            superviewBounds: CGRect(x: 0, y: 0, width: 402, height: 874)
+        )
+
+        XCTAssertEqual(frame, CGRect(x: 0, y: 0, width: 402, height: 874))
+    }
+
     func testSystemTabStandardAppearanceCanBecomeFullyTransparent() {
         let appearance = UITabBarAppearance()
         appearance.configureWithDefaultBackground()

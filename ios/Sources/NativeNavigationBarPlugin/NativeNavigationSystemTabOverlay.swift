@@ -15,6 +15,34 @@
 
 import UIKit
 
+/// The frame `systemTabRootContainer` should get on a layout pass, given its
+/// current origin (relative to its superview) and that superview's bounds.
+///
+/// `layoutChrome()` cannot use `rootView.bounds` for this: once the container
+/// has replaced `bridge.viewController.view`, `rootView` in that function IS
+/// the container, so its `.bounds` always starts at `(0, 0)` regardless of
+/// where the container actually sits in its own superview. A host app that
+/// pushes the WebView below the status bar (e.g. `@capacitor/status-bar`'s
+/// `overlaysWebView: false`) gives the container a non-zero origin before
+/// this plugin ever runs; assigning `rootView.bounds` straight to
+/// `container.frame` snaps that origin back to `(0, 0)` without growing the
+/// height to compensate, leaving a status-bar-height gap permanently exposed
+/// at the screen's bottom edge (the superview's raw background shows
+/// through it). Keeping the existing origin and only extending width/height
+/// out to the superview's true edges avoids that regression on every layout
+/// pass (rotation, keyboard events, tab updates all trigger one).
+func nativeNavigationSystemTabContainerFrame(
+    currentOrigin: CGPoint,
+    superviewBounds: CGRect
+) -> CGRect {
+    CGRect(
+        x: currentOrigin.x,
+        y: currentOrigin.y,
+        width: superviewBounds.width - currentOrigin.x,
+        height: superviewBounds.height - currentOrigin.y
+    )
+}
+
 /// True when `hit` belongs to `tabBar` and should receive the touch.
 func nativeNavigationSystemTabPassthroughAllowsHit(_ hit: UIView?, tabBar: UITabBar?) -> Bool {
     guard let hit, let tabBar else {
